@@ -35,5 +35,3 @@ class Features:
         return len(self.features)
 
 
-features = Features()
-features.extract_features("C:\\Users\\Matija\\Desktop\\APT_PROJEKT\\TAR_Project\\data\\features.csv")
