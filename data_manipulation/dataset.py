@@ -1,7 +1,6 @@
 import pandas as pd
-from sentence_transformers import SentenceTransformer
-import torch
 from torch.utils.data import Dataset
+import torch
 
 
 class Features:
@@ -13,7 +12,7 @@ class Features:
         self.original_idx_dict = {}
         self.idx_to_feature = {}
         self.feature_to_idx = {}
-        idx = 0
+        idx = 1
 
         for _, row in df.iterrows():
             self.original_idx_dict[row[0]] = row[1]
@@ -24,12 +23,6 @@ class Features:
 
         for key in self.feature_to_idx:
             self.idx_to_feature[self.feature_to_idx[key]] = key
-
-        print(len(self.feature_to_idx))
-
-
-def is_empty_list(lst):
-    return len(lst) == 0
 
 
 class PatientLabels:
@@ -44,6 +37,7 @@ class PatientLabels:
 
         self.patient_dict = {}
         self.features = features
+        self.bert_labels = {}
 
         for _, row in df.iterrows():
 
@@ -57,6 +51,18 @@ class PatientLabels:
                 feature_list = self.patient_dict[pn_num]
                 feature_list.append(new_feature_num)
                 self.patient_dict[pn_num] = feature_list
+
+        for pn_num in self.patient_dict:
+
+            label_list = [0] * 131
+            
+            for index in self.patient_dict[pn_num]:
+                index = int(index)
+                index -= 1
+                if 0 <= index <= 131:
+                    label_list[index] = 1
+                    
+            self.bert_labels[pn_num] = label_list
 
 
 class Notes:
@@ -73,30 +79,34 @@ class Notes:
                 self.texts[row[0]] = text
                 self.encoded[row[0]] = encoder_model.encode(text)
 
-     
+
 class GenerationDataset(Dataset):
 
     def __init__(self, encoding_dict, label_dict):
         self.encodings = []
         self.labels = []
-        self.mask = []
+        self.masks = []
+        MAX_NUM_FEATURES = 18
 
         for key in encoding_dict:
             self.encodings.append(encoding_dict[key])
-            self.labels.append(label_dict[key])
+            feature_labels = label_dict[key]
+            feature_labels.insert(0, 0)
+
+            mask = []
+            mask.extend([1] * len(feature_labels))
+            if len(feature_labels) < 18:
+                extension_num = (MAX_NUM_FEATURES + 1 - len(feature_labels))
+                feature_labels.extend([132] * extension_num)
+                mask.append(1)
+                mask.extend([0] * (extension_num - 1))
+            
+            mask = mask[1:]  #  to be decided
+            self.labels.append(feature_labels)
+            self.masks.append(mask)
 
     def __len__(self):
         return len(self.encodings)
 
     def __getitem__(self, index):
-        return self.encodings[index], self.labels[index]
-
-
-features = Features("C:\\Users\\Matija\\Desktop\\APT_PROJEKT\\TAR_Project\\data\\features.csv")
-labels = PatientLabels("C:\\Users\\Matija\\Desktop\\APT_PROJEKT\\TAR_Project\\data\\train.csv", features)
-
-encoder_model = SentenceTransformer('sentence-transformers/all-mpnet-base-v2')
-notes = Notes("C:\\Users\\Matija\\Desktop\\APT_PROJEKT\\TAR_Project\\data\\patient_notes.csv",
-              labels.patient_dict, encoder_model)
-
-dataset = GenerationDataset(notes.encoded, labels.patient_dict)
+        return torch.Tensor(self.encodings[index]), torch.Tensor(self.labels[index]), torch.Tensor(self.masks[index])
