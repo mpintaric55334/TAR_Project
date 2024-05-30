@@ -1,11 +1,12 @@
 import torch
 import torch.nn as nn
 from sklearn.metrics import precision_score, recall_score, f1_score
-import numpy as np
+from sklearn.model_selection import KFold
+from model.loss import Loss
 
 
 class LSTM(nn.Module):
-    def __init__(self, num_layers=1, batch_size=16, dropout=0.0):
+    def __init__(self, num_layers=2, batch_size=16, dropout=0.0):
         super(LSTM, self).__init__()
         self.lstm = nn.LSTM(input_size=20, hidden_size=768, batch_first=True,
                             num_layers=num_layers, dropout=dropout)
@@ -84,7 +85,7 @@ def evaluate(model, testloader, device="cpu"):
             index -= 1
             if 0 <= index < length:
                 binary_labels[index] = 1
-        
+
         binary_predicted = [0] * length
 
         for index in predicted_sequences:
@@ -96,28 +97,37 @@ def evaluate(model, testloader, device="cpu"):
         predicted_all.append(binary_predicted)
         true_all.append(binary_labels)
 
-    macro_precision = precision_score(true_all, predicted_all, average='macro', zero_division=0)
-    macro_recall = recall_score(true_all, predicted_all, average='macro', zero_division=0)
-    macro_f1 = f1_score(true_all, predicted_all, average='macro', zero_division=0)
+    macro_precision = precision_score(true_all, predicted_all, average='macro',
+                                      zero_division=0)
+    macro_recall = recall_score(true_all, predicted_all, average='macro',
+                                zero_division=0)
+    macro_f1 = f1_score(true_all, predicted_all, average='macro',
+                        zero_division=0)
 
-    print(f"Macro Precision: {macro_precision:.4f}")
-    print(f"Macro Recall: {macro_recall:.4f}")
-    print(f"Macro F1 Score: {macro_f1:.4f}")
+    micro_precision = precision_score(true_all, predicted_all, average='micro',
+                                      zero_division=0)
+    micro_recall = recall_score(true_all, predicted_all, average='micro',
+                                zero_division=0)
+    micro_f1 = f1_score(true_all, predicted_all, average='micro',
+                        zero_division=0)
 
-    micro_precision = precision_score(true_all, predicted_all, average='micro', zero_division=0)
-    micro_recall = recall_score(true_all, predicted_all, average='micro', zero_division=0)
-    micro_f1 = f1_score(true_all, predicted_all, average='micro', zero_division=0)
-
-    print(f"Micro Precision: {micro_precision:.4f}")
-    print(f"Micro Recall: {micro_recall:.4f}")
-    print(f"Micro F1 Score: {micro_f1:.4f}")
+    return macro_precision, macro_recall, macro_f1, micro_precision, micro_recall, micro_f1
 
 
-def train(model, train_loader, optimizer, criterion, epoch_num):
+def train(dataset, params):
 
-    model.train()
-    for epoch in range(epoch_num):
+    model = LSTM(num_layers=params["num_layers"], batch_size=params["batch_size"],
+                 dropout=params["dropout"]).to("cuda")
 
+    train_loader = torch.utils.data.DataLoader(dataset,
+                                               batch_size=params["batch_size"],
+                                               drop_last=True)
+
+    optimizer = torch.optim.Adam(model.parameters(), lr=params["lr"])
+    criterion = Loss()
+
+    for epoch in range(params["num_epochs"]):
+        model.train()
         epoch_loss = 0
         n = 0
         for encodings, labels, masks in train_loader:
@@ -138,5 +148,53 @@ def train(model, train_loader, optimizer, criterion, epoch_num):
             optimizer.step()
 
         print("Epoch", epoch, " loss is ", epoch_loss/n)
-
     return model
+
+
+def train_with_validation(dataset, params):
+
+    kfold = KFold(n_splits=5, shuffle=True, random_state=42)
+    average_metric = 0
+    for _, (train_idx, val_idx) in enumerate(kfold.split(dataset)):
+
+        model = LSTM(num_layers=params["num_layers"], batch_size=params["batch_size"],
+                     dropout=params["dropout"]).to("cuda")
+
+        train_subsampler = torch.utils.data.SubsetRandomSampler(train_idx)
+        val_subsampler = torch.utils.data.SubsetRandomSampler(val_idx)
+
+        train_loader = torch.utils.data.DataLoader(dataset,
+                                                   batch_size=params["batch_size"],sampler=train_subsampler,
+                                                   drop_last=True)
+        val_loader = torch.utils.data.DataLoader(dataset, batch_size=1,
+                                                 sampler=val_subsampler)
+
+        optimizer = torch.optim.Adam(model.parameters(), lr=params["lr"])
+        criterion = Loss()
+
+        for _ in range(params["num_epochs"]):
+            model.train()
+            epoch_loss = 0
+            n = 0
+            for encodings, labels, masks in train_loader:
+
+                encodings = encodings.to("cuda")
+                labels = labels.to("cuda")
+                masks = masks.to("cuda")
+
+                outputs = model(labels, encodings)
+
+                optimizer.zero_grad()
+
+                loss = criterion.compute_loss(outputs, labels, masks)
+
+                epoch_loss += loss.item()
+                n += 1
+                loss.backward()
+                optimizer.step()
+
+        model.reset_states()
+        _, _, macro_f1, _, _, micro_f1 = evaluate(model, val_loader, "cuda")
+        average_metric = macro_f1 * micro_f1
+
+    return average_metric

@@ -3,7 +3,9 @@ from data_manipulation.dataset import Features, PatientLabels
 from transformers import BertTokenizer, BertForSequenceClassification, TrainingArguments
 from model.bert_model import compute_metrics, CustomTrainer
 from torch.utils.data import random_split
+import torch
 
+torch.manual_seed(42)
 
 tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
 
@@ -22,7 +24,7 @@ trainset, testset = random_split(dataset, [800, 200])
 
 training_args = TrainingArguments(
     output_dir="output_dir",
-    num_train_epochs=20,
+    num_train_epochs=30,
     per_device_train_batch_size=4,
     per_device_eval_batch_size=8,
     warmup_steps=500,
