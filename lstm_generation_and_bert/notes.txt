@@ -1,0 +1,6 @@
+Longest text is 182 words.
+768 sentence encoder
+1000 primjera
+Za sada ne sortitam feature list prije treninga
+131 non duplicate feature
+132 je padding index, a  0 start token
